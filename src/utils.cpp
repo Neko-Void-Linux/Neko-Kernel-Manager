@@ -124,7 +124,7 @@ bool packageExists(const std::string &pkgName) {
 
 bool packageInstalled(const std::string &pkgName) {
     if (!commandExists("xbps-query")) return false;
-    return QProcess::execute("xbps-query", {"-W", QString::fromStdString(pkgName)}) == 0;
+    return QProcess::execute("xbps-query", {QString::fromStdString(pkgName)}) == 0;
 }
 
 std::string getRealHome() {

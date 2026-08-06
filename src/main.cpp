@@ -13,8 +13,15 @@
 int main(int argc, char *argv[]) {
     // Set style to Fusion BEFORE creating QApplication to ensure consistency
     QApplication::setStyle(QStyleFactory::create("Fusion"));
-    
+
+    QCoreApplication::setApplicationName("com.neko.kernelmanager");
+    QCoreApplication::setApplicationVersion("1.3.0");
+    QCoreApplication::setOrganizationName("Neko");
+    QCoreApplication::setOrganizationDomain("com.neko");
+    QGuiApplication::setDesktopFileName("neko-kernel-manager.desktop");
+
     QApplication app(argc, argv);
+    app.setApplicationDisplayName("Neko Kernel Manager");
     app.setWindowIcon(QIcon(":/neko/Data/logo.png"));
 
     // Load Nerd Fonts

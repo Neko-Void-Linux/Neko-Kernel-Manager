@@ -69,6 +69,7 @@ signals:
 
 private:
     bool m_busy = false;
+    int m_busyCount = 0;
     int m_progress = 0;
     QString m_logs;
     QVariantList m_kernelsCache;

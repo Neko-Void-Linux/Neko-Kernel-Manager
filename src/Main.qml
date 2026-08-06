@@ -626,6 +626,7 @@ ApplicationWindow
                                                             radius: 3
                                                             color: removeBtn.hovered ? palette.surfaceHi : "transparent"
                                                         }
+                                                        onClicked: bridge.removeKernel(modelData.name)
                                                         ToolTip
                                                         {
                                                             id: removeTip

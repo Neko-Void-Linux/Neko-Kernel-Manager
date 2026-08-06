@@ -38,14 +38,14 @@ std::string Kernel::category() const {
 
 std::string Kernel::size() const {
     if (m_pkg.type == "manual") return "Unknown";
-    std::string s = utils::exec("xbps-query -H -p installed_size " + m_pkg.name);
+    std::string s = utils::exec("xbps-query -p installed_size " + m_pkg.name);
     if (s.empty() || s.find("not found") != std::string::npos) return "Unknown";
     return s;
 }
 
 std::string Kernel::installDate() const {
     if (m_pkg.type == "manual") return "N/A";
-    std::string d = utils::exec("xbps-query -H -p install-date " + m_pkg.name);
+    std::string d = utils::exec("xbps-query -p install-date " + m_pkg.name);
     if (d.empty() || d.find("not found") != std::string::npos) return "N/A";
     return d;
 }
@@ -60,14 +60,30 @@ std::vector<Kernel> Kernel::getKernels() {
         // Must start with "linux"
         if (name.rfind("linux", 0) != 0) return false;
 
-        // Exclude non-kernel utilities and firmware/headers/docs/tools/common/progs
-        if (name.find("util-linux") != std::string::npos) return false;
-        if (name == "linux-api-headers" || name == "linux-firmware" || name == "linux-libre" ||
-            name == "linux-base" || name == "linux-user" || name == "linux-atm" || name == "linux-utils" ||
-            name == "linux-gpib" || name == "linux-pam" || name == "linux-container" || name == "linux-kmod") return false;
+        // Exclude known non-kernel linux packages.
+        static const std::vector<std::string> excludedNames = {
+            "linux-api-headers",
+            "linux-firmware",
+            "linux-libre",
+            "linux-base",
+            "linux-user",
+            "linux-atm",
+            "linux-utils",
+            "linux-gpib",
+            "linux-pam",
+            "linux-container",
+            "linux-kmod",
+            "linux-driver-management",
+            "linux-driver-management-32bit",
+            "linux-vt-setcolors",
+            "linux-wifi-hotspot"
+        };
+        for (const auto &excluded : excludedNames) {
+            if (name == excluded) return false;
+        }
 
+        // Exclude firmware packages and common non-kernel suffix packages.
         if (name.rfind("linux-firmware-", 0) == 0) return false;
-
         if (name.find("-headers") != std::string::npos ||
             name.find("-devel") != std::string::npos ||
             name.find("-dbg") != std::string::npos ||
@@ -76,13 +92,25 @@ std::vector<Kernel> Kernel::getKernels() {
             name.find("-common") != std::string::npos ||
             name.find("-progs") != std::string::npos) return false;
 
-        // Accept official & custom kernel package names
-        if (name == "linux" || name == "linux-lts" || name == "linux-mainline" ||
-            name == "linux-zen" || name == "linux-rt" || name == "linux-hardened") return true;
+        // Accept official kernel package names.
+        static const std::vector<std::string> allowedNames = {
+            "linux",
+            "linux-lts",
+            "linux-mainline",
+            "linux-zen",
+            "linux-rt",
+            "linux-hardened"
+        };
+        for (const auto &allowed : allowedNames) {
+            if (name == allowed) return true;
+        }
 
         if (name.rfind("linux-neko", 0) == 0 || name.rfind("linux-cachy", 0) == 0) return true;
+        if (name.rfind("linux-manual-", 0) == 0) return true;
 
-        if (name.length() > 5 && (std::isdigit(name[5]) || name[5] == '-')) return true;
+        // Accept numeric kernel package names such as linux7.1, linux6.18, linux-6.1, linux-7.1.5
+        if (name.size() > 5 && std::isdigit(name[5])) return true;
+        if (name.rfind("linux-", 0) == 0 && name.size() > 6 && std::isdigit(name[6])) return true;
 
         return false;
     };
@@ -135,8 +163,7 @@ std::vector<Kernel> Kernel::getKernels() {
         }
 
         // Stage 3: Repository search for uninstalled kernels
-        std::string repoOutput = utils::exec("xbps-query -Rs '^linux'");
-        repoOutput += "\n" + utils::exec("xbps-query -Rs 'Linux kernel'");
+        std::string repoOutput = utils::exec("xbps-query -Rs linux");
         repoOutput += "\n" + utils::exec("xbps-query -Rs linux-neko");
         repoOutput += "\n" + utils::exec("xbps-query -Rs linux-cachy-void");
         std::vector<std::string> repoLines = utils::split(repoOutput, '\n');
