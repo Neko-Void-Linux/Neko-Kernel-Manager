@@ -30,7 +30,7 @@ public:
 
     Q_INVOKABLE void updateKernels();
     Q_INVOKABLE void installKernel(const QString &name);
-    Q_INVOKABLE void removeKernel(const QString &name);
+    Q_INVOKABLE void removeKernel(const QString &name, const QString &type, const QString &version);
     Q_INVOKABLE void vkpurge();
 
     // DKMS Management
@@ -84,6 +84,8 @@ private:
 
     QString m_statusMessage;
     bool m_statusIsError = false;
+
+    Q_DISABLE_COPY_MOVE(KernelBridge)
 };
 
 #endif // KERNEL_BRIDGE_HPP
