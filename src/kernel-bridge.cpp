@@ -204,11 +204,19 @@ void KernelBridge::installKernel(const QString &name) {
     (void)future;
 }
 
-void KernelBridge::removeKernel(const QString &name) {
-    bool isManual = name.startsWith("linux-manual-");
+void KernelBridge::removeKernel(const QString &name, const QString &type, const QString &version) {
+    bool isManual = (type.toLower() == "manual");
     QString runningVer = activeKernelVersion().trimmed();
+    QString targetVersion = version;
+    if (targetVersion.isEmpty() && isManual && name.startsWith("linux-manual-")) {
+        targetVersion = name.mid(QString("linux-manual-").size());
+    }
+    if (targetVersion.isEmpty()) {
+        targetVersion = name;
+    }
+
     if (!runningVer.isEmpty()) {
-        QString verToCheck = isManual ? name.mid(13) : name;
+        QString verToCheck = isManual ? targetVersion : name;
         if (verToCheck.contains(runningVer) || runningVer.contains(verToCheck) || name.contains(runningVer)) {
             appendLog("SECURITY WARNING: Attempted to uninstall currently running kernel (" + runningVer + "). Operation aborted. Reboot into a different kernel before removing it.");
             setStatusMessage("Cannot remove currently running kernel! Reboot into another kernel first.", true);
@@ -218,24 +226,43 @@ void KernelBridge::removeKernel(const QString &name) {
     appendLog("Starting removal of kernel: " + name + " (Type: " + QString(isManual ? "Manual /boot" : "XBPS package") + ")");
     setBusy(true);
     setProgress(10);
-    auto future = QtConcurrent::run([this, name, isManual]() {
+    auto future = QtConcurrent::run([this, name, type, targetVersion, isManual]() {
         std::string cmd;
+        std::string tempScriptPath;
         if (isManual) {
-            std::string ver = name.toStdString().substr(13);
-            cmd = "pkexec sh -c \"if [ -n '" + ver + "' ]; then "
-                  "rm -fv /boot/vmlinuz-" + ver + 
-                  " /boot/initramfs-" + ver + ".img /boot/initrd.img-" + ver +
-                  " /boot/config-" + ver + " /boot/System.map-" + ver +
-                  " /boot/vmlinuz-" + ver + ".old /boot/initramfs-" + ver + ".old.img; "
-                  "rm -rfv /usr/lib/modules/" + ver + " /lib/modules/" + ver + "; "
-                  "(which grub-mkconfig >/dev/null 2>&1 && grub-mkconfig -o /boot/grub/grub.cfg || true); "
-                  "fi\" 2>&1";
+            std::string ver = targetVersion.toStdString();
+            char tempPathTemplate[] = "/tmp/neko-kernel-remove-XXXXXX";
+            int fd = mkstemp(tempPathTemplate);
+            if (fd != -1) {
+                tempScriptPath = tempPathTemplate;
+                std::string script = "set -e\n"
+                                     "rm -f /boot/vmlinuz-" + ver +
+                                     " /boot/initramfs-" + ver + ".img /boot/initrd.img-" + ver +
+                                     " /boot/config-" + ver + " /boot/System.map-" + ver +
+                                     " /boot/vmlinuz-" + ver + ".old /boot/initramfs-" + ver + ".old.img\n"
+                                     "rm -rf /usr/lib/modules/" + ver + " /lib/modules/" + ver + "\n"
+                                     "(which grub-mkconfig >/dev/null 2>&1 && grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || true)\n";
+                write(fd, script.c_str(), script.size());
+                fchmod(fd, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+                close(fd);
+                cmd = "pkexec sh " + tempScriptPath + " 2>&1";
+            } else {
+                cmd = "pkexec sh -c \"if [ -n '" + ver + "' ]; then "
+                      "rm -f /boot/vmlinuz-" + ver + 
+                      " /boot/initramfs-" + ver + ".img /boot/initrd.img-" + ver +
+                      " /boot/config-" + ver + " /boot/System.map-" + ver +
+                      " /boot/vmlinuz-" + ver + ".old /boot/initramfs-" + ver + ".old.img; "
+                      "rm -rf /usr/lib/modules/" + ver + " /lib/modules/" + ver + "; "
+                      "(which grub-mkconfig >/dev/null 2>&1 && grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || true); "
+                      "fi\" 2>&1";
+            }
         } else {
             std::string pkgName = name.toStdString();
             cmd = "pkexec sh -c \"xbps-remove -Rfy " + pkgName + " && (which grub-mkconfig >/dev/null 2>&1 && grub-mkconfig -o /boot/grub/grub.cfg || true)\" 2>&1";
         }
         
         appendLog("Executing: " + QString::fromStdString(cmd));
+        QMetaObject::invokeMethod(this, [this]() { setProgress(40); }, Qt::QueuedConnection);
         FILE* pipe = popen(cmd.c_str(), "r");
         bool success = false;
         if (pipe) {
@@ -245,6 +272,9 @@ void KernelBridge::removeKernel(const QString &name) {
                 appendLog(line);
             }
             success = (pclose(pipe) == 0);
+        }
+        if (!tempScriptPath.empty()) {
+            unlink(tempScriptPath.c_str());
         }
 
         QMetaObject::invokeMethod(this, [this, success, name]() {
@@ -720,7 +750,6 @@ void KernelBridge::autoinstallDkms() {
 
 // Default Kernel Selection Implementation
 QString KernelBridge::getDefaultKernelInternal() {
-    // Check GRUB config if present
     if (QFile::exists("/etc/default/grub")) {
         std::string line = utils::exec("grep '^GRUB_DEFAULT=' /etc/default/grub");
         if (!line.empty()) {
@@ -730,9 +759,7 @@ QString KernelBridge::getDefaultKernelInternal() {
                 QString val = str.mid(eqIdx + 1).trimmed();
                 val.remove('"');
                 val.remove('\'');
-                
                 if (val == "saved") {
-                    // Query grub-editenv to find the actual saved entry
                     std::string savedLine = utils::exec("grub-editenv list 2>/dev/null | grep '^saved_entry=' || grub2-editenv list 2>/dev/null | grep '^saved_entry='");
                     if (!savedLine.empty()) {
                         QString savedStr = QString::fromStdString(savedLine).trimmed();
@@ -784,14 +811,21 @@ void KernelBridge::updateDefaultKernel() {
 }
 
 void KernelBridge::setDefaultKernel(const QString &kernelVersion) {
-    appendLog("Requesting default boot kernel change to: " + kernelVersion);
-    setBusy(true);
+    // Usar invokeMethod para asegurar que appendLog y setBusy se llaman en el hilo principal
+    QMetaObject::invokeMethod(this, [this, kernelVersion]() {
+        appendLog("Requesting default boot kernel change to: " + kernelVersion);
+        setBusy(true);
+    }, Qt::QueuedConnection);
     
     auto future = QtConcurrent::run([this, kernelVersion]() {
         QString bootloader = detectedBootloader();
-        appendLog("Detected bootloader: " + bootloader);
-        std::string cmd;
         
+        QMetaObject::invokeMethod(this, [this, bootloader]() {
+            appendLog("Detected bootloader: " + bootloader);
+        }, Qt::QueuedConnection);
+
+        std::string cmd;
+
         if (bootloader == "GRUB") {
             std::string distributor = "Void Linux"; // fallback
 
@@ -825,17 +859,19 @@ void KernelBridge::setDefaultKernel(const QString &kernelVersion) {
                 }
             }
 
-            QString grubEntry = QString::fromStdString(distributor.c_str()) + ", with Linux " + kernelVersion;
+            QString grubEntry = QString::fromStdString(distributor) + ", with Linux " + kernelVersion;
             std::string entry = grubEntry.toStdString();
-            auto shellEscapeSingleQuotes = [](const std::string &value) {
-                std::string escaped;
+            
+            // Función para escapar comillas simples de forma segura en scripts sh
+            auto shellEscapeSingleQuotes = [](const std::string &value) -> std::string {
+                std::string escaped = "'";
                 for (char c : value) {
                     if (c == '\'') escaped += "'\\''";
                     else escaped += c;
                 }
+                escaped += "'";
                 return escaped;
             };
-            std::string escapedEntry = shellEscapeSingleQuotes(entry);
 
             std::string grubEditenvBin;
             if (utils::commandExists("grub-editenv")) {
@@ -850,59 +886,197 @@ void KernelBridge::setDefaultKernel(const QString &kernelVersion) {
             }
 
             std::string grubCfgPath = "/boot/grub/grub.cfg";
-            if (!QFile::exists(QString::fromStdString(grubCfgPath))) {
+            bool grubCfgExists = QFile::exists(QString::fromStdString(grubCfgPath));
+            if (!grubCfgExists) {
                 grubCfgPath = "/boot/grub2/grub.cfg";
+                grubCfgExists = QFile::exists(QString::fromStdString(grubCfgPath));
             }
 
             QString actualEntry;
-            if (!grubCfgPath.empty()) {
-                QFile cfg(QString::fromStdString(grubCfgPath));
-                if (cfg.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                    QTextStream in(&cfg);
-                    while (!in.atEnd()) {
-                        QString line = in.readLine();
-                        if (line.contains("menuentry", Qt::CaseInsensitive)
-                            && line.contains(QString::fromStdString(kernelVersion), Qt::CaseInsensitive)
-                            && !line.contains("recovery", Qt::CaseInsensitive)) {
-                            int firstQuote = line.indexOf('\'');
-                            int secondQuote = line.indexOf('\'', firstQuote + 1);
-                            if (firstQuote != -1 && secondQuote > firstQuote) {
-                                actualEntry = line.mid(firstQuote + 1, secondQuote - firstQuote - 1).trimmed();
+            bool foundEntry = false;
+
+            if (grubCfgExists) {
+                auto parseGrubCfg = [&](const QStringList &lines) -> bool {
+                    int braceCount = 0;
+                    QString currentSubmenu;
+                    int submenuBraceLevel = -1;
+
+                    auto extractTitle = [](const QString &l) -> QString {
+                        int firstQuote = -1;
+                        QChar quoteChar;
+                        for (int i = 0; i < l.size(); ++i) {
+                            if (l[i] == '\'' || l[i] == '"') {
+                                firstQuote = i;
+                                quoteChar = l[i];
                                 break;
                             }
                         }
+                        if (firstQuote != -1) {
+                            int secondQuote = l.indexOf(quoteChar, firstQuote + 1);
+                            if (secondQuote != -1) {
+                                return l.mid(firstQuote + 1, secondQuote - firstQuote - 1).trimmed();
+                            }
+                        }
+                        return "";
+                    };
+
+                    for (const QString &rawLine : lines) {
+                        QString line = rawLine.trimmed();
+
+                        if (line.contains("submenu ", Qt::CaseInsensitive)) {
+                            QString subTitle = extractTitle(line);
+                            if (!subTitle.isEmpty()) {
+                                currentSubmenu = subTitle;
+                                submenuBraceLevel = braceCount;
+                            }
+                        }
+
+                        if (line.contains("menuentry ", Qt::CaseInsensitive)
+                            && line.contains(kernelVersion, Qt::CaseInsensitive)
+                            && !line.contains("recovery", Qt::CaseInsensitive)) {
+                            QString entryTitle = extractTitle(line);
+                            if (!entryTitle.isEmpty()) {
+                                if (!currentSubmenu.isEmpty()) {
+                                    actualEntry = currentSubmenu + ">" + entryTitle;
+                                } else {
+                                    actualEntry = entryTitle;
+                                }
+                                foundEntry = true;
+                                return true;
+                            }
+                        }
+
+                        for (int i = 0; i < line.size(); ++i) {
+                            if (line[i] == '{') {
+                                braceCount++;
+                            } else if (line[i] == '}') {
+                                braceCount--;
+                                if (submenuBraceLevel != -1 && braceCount <= submenuBraceLevel) {
+                                    currentSubmenu = "";
+                                    submenuBraceLevel = -1;
+                                }
+                            }
+                        }
+                    }
+                    return false;
+                };
+
+                QStringList lines;
+                QFile cfg(QString::fromStdString(grubCfgPath));
+                bool cfgReadable = cfg.open(QIODevice::ReadOnly | QIODevice::Text);
+                
+                if (cfgReadable) {
+                    QTextStream in(&cfg);
+                    while (!in.atEnd()) {
+                        lines.append(in.readLine());
                     }
                     cfg.close();
+                    if (!lines.isEmpty()) {
+                        foundEntry = parseGrubCfg(lines);
+                    }
+                }
+
+                // Solo intentar con pkexec si no se pudo leer el archivo por permisos
+                if (!cfgReadable && !foundEntry) {
+                    std::string catCmd = "pkexec cat '" + grubCfgPath + "' 2>/dev/null";
+                    std::string catOutput = utils::exec(catCmd);
+                    if (!catOutput.empty()) {
+                        lines = QString::fromStdString(catOutput).split('\n');
+                        foundEntry = parseGrubCfg(lines);
+                    }
                 }
             }
-            if (actualEntry.isEmpty()) {
+
+            if (!foundEntry) {
                 actualEntry = QString::fromStdString(entry);
             }
 
             std::string escapedActualEntry = shellEscapeSingleQuotes(actualEntry.toStdString());
 
-            std::string commandChain = "set -e; sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT=saved/' /etc/default/grub || true; ";
+            // Construir la cadena de comandos
+            std::string commandChain = "export PATH=$PATH:/usr/sbin:/sbin; set -e; ";
+            // Usar grep -E y [[:space:]] para mayor portabilidad POSIX
+            commandChain += "if grep -Eq '^#?[[:space:]]*GRUB_DEFAULT=' /etc/default/grub; then ";
+            commandChain += "sed -i -E 's/^#?[[:space:]]*GRUB_DEFAULT=.*/GRUB_DEFAULT=saved/' /etc/default/grub; ";
+            commandChain += "else ";
+            commandChain += "echo 'GRUB_DEFAULT=saved' >> /etc/default/grub; ";
+            commandChain += "fi; ";
+
             if (!grubEditenvBin.empty() && !grubEnvPath.empty()) {
-                commandChain += grubEditenvBin + " " + grubEnvPath + " set saved_entry='" + escapedActualEntry + "'";
+                // Asegurar que el archivo grubenv exista antes de editarlo
+                if (!QFile::exists(QString::fromStdString(grubEnvPath))) {
+                    commandChain += grubEditenvBin + " " + grubEnvPath + " create; ";
+                }
+                commandChain += grubEditenvBin + " " + grubEnvPath + " set saved_entry=" + escapedActualEntry + "; ";
             } else if (utils::commandExists("grub-set-default")) {
-                commandChain += "grub-set-default '" + escapedActualEntry + "'";
+                commandChain += "grub-set-default " + escapedActualEntry + "; ";
             } else if (utils::commandExists("grub2-set-default")) {
-                commandChain += "grub2-set-default '" + escapedActualEntry + "'";
+                commandChain += "grub2-set-default " + escapedActualEntry + "; ";
             } else {
-                commandChain += "echo 'No GRUB command available' >&2; false";
+                commandChain += "echo 'No GRUB command available' >&2; false; ";
             }
 
-            if (QFile::exists(QString::fromStdString(grubCfgPath))) {
-                commandChain += " && grub-mkconfig -o " + grubCfgPath;
+            if (grubCfgExists) {
+                commandChain += "if command -v update-grub >/dev/null 2>&1; then update-grub; ";
+                commandChain += "elif command -v grub-mkconfig >/dev/null 2>&1; then grub-mkconfig -o " + grubCfgPath + "; ";
+                commandChain += "elif command -v grub2-mkconfig >/dev/null 2>&1; then grub2-mkconfig -o " + grubCfgPath + "; ";
+                commandChain += "else echo 'No grub-mkconfig or update-grub command found' >&2; false; fi ";
             }
 
-            cmd = "pkexec sh -c \"" + commandChain + "\" 2>&1";
+            // Escribir en un archivo temporal para evitar problemas de escapado con pkexec sh -c
+            std::string tempScriptPath;
+            {
+                char templatePath[] = "/tmp/com.neko.kernelmanager.XXXXXX";
+                int fd = mkstemp(templatePath);
+                if (fd != -1) {
+                    tempScriptPath = templatePath;
+                    std::string content = commandChain;
+                    ssize_t written = write(fd, content.c_str(), content.size());
+                    (void)written;
+                    (void)fchmod(fd, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+                    close(fd);
+                }
+            }
+
+            if (!tempScriptPath.empty()) {
+                cmd = "pkexec sh " + shellEscapeSingleQuotes(tempScriptPath) + " 2>&1";
+            } else {
+                // Si falla la creación del temporal, usamos un fallback con doble escapado
+                auto shellEscapeDouble = [](const std::string &value) {
+                    std::string escaped = "\"";
+                    for (char c : value) {
+                        if (c == '"' || c == '\\' || c == '$' || c == '`') 
+                            escaped += "\\";
+                        escaped += c;
+                    }
+                    escaped += "\"";
+                    return escaped;
+                };
+                
+                // Reemplazar escapedActualEntry en commandChain por su versión de doble escapado
+                std::string doubleEscaped = shellEscapeDouble(actualEntry.toStdString());
+                size_t pos = commandChain.find(escapedActualEntry);
+                while (pos != std::string::npos) {
+                    commandChain.replace(pos, escapedActualEntry.length(), doubleEscaped);
+                    pos = commandChain.find(escapedActualEntry, pos + doubleEscaped.length());
+                }
+
+                cmd = "pkexec sh -c " + shellEscapeDouble(commandChain) + " 2>&1";
+            }
+
+            if (!tempScriptPath.empty()) {
+                cmd += "; rm -f " + shellEscapeSingleQuotes(tempScriptPath);
+            }
         } else if (bootloader == "systemd-boot") {
             cmd = "pkexec bootctl set-default linux-" + kernelVersion.toStdString() + ".conf 2>&1";
         } else {
             cmd = "pkexec sh -c \"echo 'Default kernel selection for " + bootloader.toStdString() + 
                   " updated'\" 2>&1";
         }
+
+        QMetaObject::invokeMethod(this, [cmd]() {
+            // appendLog takes std::string or QString
+        }, Qt::QueuedConnection);
 
         appendLog("Executing: " + QString::fromStdString(cmd));
 
