@@ -3,6 +3,7 @@ pkgname=neko-kernel-manager
 version=1.3.0
 revision=1
 build_style=meson
+configure_args="-Db_lto=false"
 hostmakedepends="pkg-config qt6-base qt6-declarative rust cargo"
 makedepends="qt6-base-devel qt6-declarative-devel fmt-devel"
 short_desc="Comprehensive kernel manager for Void Linux"

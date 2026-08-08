@@ -17,10 +17,11 @@
 KernelBridge::KernelBridge(QObject *parent) : QObject(parent) {
 }
 
-KernelBridge::~KernelBridge() {
-    system("rm -rf /tmp/neko-kernel-*");
-}
-
+ KernelBridge::~KernelBridge() {
+     int res = system("rm -rf /tmp/neko-kernel-*");
+     (void)res;
+ }
+ 
 void KernelBridge::setBusy(bool b) {
     if (b) {
         ++m_busyCount;
@@ -242,8 +243,9 @@ void KernelBridge::removeKernel(const QString &name, const QString &type, const 
                                      " /boot/vmlinuz-" + ver + ".old /boot/initramfs-" + ver + ".old.img\n"
                                      "rm -rf /usr/lib/modules/" + ver + " /lib/modules/" + ver + "\n"
                                      "(which grub-mkconfig >/dev/null 2>&1 && grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || true)\n";
-                write(fd, script.c_str(), script.size());
-                fchmod(fd, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+                 ssize_t bytesWritten = write(fd, script.c_str(), script.size());
+                 (void)bytesWritten;
+                 (void)fchmod(fd, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
                 close(fd);
                 cmd = "pkexec sh " + tempScriptPath + " 2>&1";
             } else {

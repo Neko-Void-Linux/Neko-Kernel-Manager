@@ -68,13 +68,14 @@ void runInTerminal(const std::string& cmd) {
         }
     }
 
-    if (!terminal.empty()) {
-        std::string finalCmd = terminal + " -e sh -c \"" + cmd + "; echo 'Press enter to close...'; read\"";
-        system(finalCmd.c_str());
-    } else {
-        system(cmd.c_str());
-    }
-}
+     if (!terminal.empty()) {
+         std::string finalCmd = terminal + " -e sh -c \"" + cmd + "; echo 'Press enter to close...'; read\"";
+         int res = system(finalCmd.c_str());
+         (void)res;
+     } else {
+         int res = system(cmd.c_str());
+         (void)res;
+     }
 
 bool fileOwnedByPackage(const std::string &filePath) {
     if (!commandExists("xbps-query")) return false;
