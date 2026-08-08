@@ -33,7 +33,7 @@ moc_files = qt6.compile_moc(headers: files('src/kernel-bridge.hpp', 'src/theme-m
 
 executable('neko-kernel-manager',
     sources: [src_files, qt6_resources, moc_files],
-    dependencies: [qt6_dep],
+    dependencies: [qt6_dep, rust_lib],
     install: true,
 )
 
