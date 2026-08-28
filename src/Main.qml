@@ -2,6 +2,9 @@ import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Controls.Material 2.15
 import QtQuick.Layouts 1.15
+import QtQuick.Dialogs
+import Qt.labs.platform 1.1 as Platform
+import QtCore
 
 ApplicationWindow
 {
@@ -749,6 +752,37 @@ ApplicationWindow
                     text: qsTr("System Logs & Operations"); color: palette.fg; font.bold: true; font.pixelSize: 14
                 }
                 Item { Layout.fillWidth: true }
+
+                // --- NUEVO BOTÓN EXPORT LOGS (corregido) ---
+                Button
+                {
+                    id: exportLogsBtn
+                    text: qsTr("Export Logs")
+                    enabled: bridge.logs.length > 0
+                    opacity: enabled ? 1.0 : 0.4
+                    ToolTip
+                    {
+                        visible: exportLogsBtn.hovered
+                        delay: 400
+                        text: qsTr("Save logs to a text file")
+                    }
+                    background: Rectangle
+                    {
+                        implicitWidth: 90; implicitHeight: 22; radius: 0
+                        color: exportLogsBtn.hovered && exportLogsBtn.enabled ? palette.surfaceHi : palette.bg
+                        border.color: palette.currentLine
+                    }
+                    contentItem: Text
+                    {
+                        text: exportLogsBtn.text
+                        color: exportLogsBtn.enabled ? palette.fg : palette.comment
+                        font.pixelSize: 10
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: fileDialog.open()
+                }
+
                 Button
                 {
                     text: qsTr("Clear"); onClicked: bridge.clearLogs()
@@ -797,6 +831,23 @@ ApplicationWindow
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // ─── FileDialog for exporting logs (usando Qt.labs.platform) ───
+    Platform.FileDialog
+    {
+        id: fileDialog
+        title: "Save Logs"
+        fileMode: Platform.FileDialog.SaveFile
+        folder: StandardPaths.writableLocation(StandardPaths.DocumentsLocation)
+        nameFilters: ["Text files (*.txt)", "All files (*)"]
+        defaultSuffix: "txt"
+        onAccepted: {
+            if (fileDialog.fileUrl.toString().length > 0) {
+                var filePath = fileDialog.fileUrl.toString().replace("file://", "")
+                bridge.exportLogs(filePath)
             }
         }
     }

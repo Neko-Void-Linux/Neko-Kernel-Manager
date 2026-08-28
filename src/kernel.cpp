@@ -16,11 +16,17 @@ bool Kernel::is_installed() const {
     return m_pkg.is_installed;
 }
 
+bool Kernel::has_files() const {
+    return m_pkg.has_files;
+}
+
 bool Kernel::install() {
+    // La lógica real está en KernelBridge::installKernel
     return true;
 }
 
 bool Kernel::remove() {
+    // La lógica real está en KernelBridge::removeKernel
     return true;
 }
 
@@ -50,6 +56,22 @@ std::string Kernel::installDate() const {
     return d;
 }
 
+// Verifica si los archivos de un kernel existen en /boot y /lib/modules
+static bool kernelFilesExist(const std::string &version) {
+    // Verificar vmlinuz en /boot (OBLIGATORIO)
+    std::string vmlinuzPath = "/boot/vmlinuz-" + version;
+    bool hasVmlinuz = utils::fileExists(vmlinuzPath);
+    
+    // Si no hay vmlinuz, el kernel no es funcional, devolvemos false
+    if (!hasVmlinuz) {
+        return false;
+    }
+    
+    // Si existe vmlinuz, consideramos que el kernel tiene archivos
+    // (no es necesario comprobar módulos porque el kernel ya es funcional con vmlinuz)
+    return true;
+}
+
 std::vector<Kernel> Kernel::getKernels() {
     std::vector<Kernel> kernels;
     std::set<std::string> knownNames;
@@ -57,32 +79,18 @@ std::vector<Kernel> Kernel::getKernels() {
     std::map<std::string, std::string> installedPkgs;
 
     auto isKernelPackage = [](const std::string &name) -> bool {
-        // Must start with "linux"
         if (name.rfind("linux", 0) != 0) return false;
 
-        // Exclude known non-kernel linux packages.
         static const std::vector<std::string> excludedNames = {
-            "linux-api-headers",
-            "linux-firmware",
-            "linux-libre",
-            "linux-base",
-            "linux-user",
-            "linux-atm",
-            "linux-utils",
-            "linux-gpib",
-            "linux-pam",
-            "linux-container",
-            "linux-kmod",
-            "linux-driver-management",
-            "linux-driver-management-32bit",
-            "linux-vt-setcolors",
-            "linux-wifi-hotspot"
+            "linux-api-headers", "linux-firmware", "linux-libre", "linux-base",
+            "linux-user", "linux-atm", "linux-utils", "linux-gpib", "linux-pam",
+            "linux-container", "linux-kmod", "linux-driver-management",
+            "linux-driver-management-32bit", "linux-vt-setcolors", "linux-wifi-hotspot"
         };
         for (const auto &excluded : excludedNames) {
             if (name == excluded) return false;
         }
 
-        // Exclude firmware packages and common non-kernel suffix packages.
         if (name.rfind("linux-firmware-", 0) == 0) return false;
         if (name.find("-headers") != std::string::npos ||
             name.find("-devel") != std::string::npos ||
@@ -92,14 +100,8 @@ std::vector<Kernel> Kernel::getKernels() {
             name.find("-common") != std::string::npos ||
             name.find("-progs") != std::string::npos) return false;
 
-        // Accept official kernel package names.
         static const std::vector<std::string> allowedNames = {
-            "linux",
-            "linux-lts",
-            "linux-mainline",
-            "linux-zen",
-            "linux-rt",
-            "linux-hardened"
+            "linux", "linux-lts", "linux-mainline", "linux-zen", "linux-rt", "linux-hardened"
         };
         for (const auto &allowed : allowedNames) {
             if (name == allowed) return true;
@@ -108,7 +110,6 @@ std::vector<Kernel> Kernel::getKernels() {
         if (name.rfind("linux-neko", 0) == 0 || name.rfind("linux-cachy", 0) == 0) return true;
         if (name.rfind("linux-manual-", 0) == 0) return true;
 
-        // Accept numeric kernel package names such as linux7.1, linux6.18, linux-6.1, linux-7.1.5
         if (name.size() > 5 && std::isdigit(name[5])) return true;
         if (name.rfind("linux-", 0) == 0 && name.size() > 6 && std::isdigit(name[6])) return true;
 
@@ -129,7 +130,6 @@ std::vector<Kernel> Kernel::getKernels() {
         return !outPkgName.empty() && !outVer.empty();
     };
 
-    // Stage 1 & 2: Detect XBPS Installed Kernels via `xbps-query -l`
     if (utils::commandExists("xbps-query")) {
         std::string installedOutput = utils::exec("xbps-query -l");
         std::vector<std::string> installedLines = utils::split(installedOutput, '\n');
@@ -151,19 +151,20 @@ std::vector<Kernel> Kernel::getKernels() {
             }
         }
 
-        // Add all installed packages directly to kernels vector
         for (const auto &pair : installedPkgs) {
             const std::string &pkg_name = pair.first;
             const std::string &version = pair.second;
-            Package pkg{pkg_name, version, "void", "xbps", true};
-            Package headers{pkg_name + "-headers", version, "void", "xbps", true};
+            bool hasFiles = kernelFilesExist(version);
+            bool installed = hasFiles;
+            Package pkg{pkg_name, version, "void", "xbps", installed, hasFiles};
+            Package headers{pkg_name + "-headers", version, "void", "xbps", true, true};
             kernels.emplace_back(pkg, headers);
             knownNames.insert(pkg_name);
             knownVersions.insert(version);
         }
 
-        // Stage 3: Repository search for uninstalled kernels
-        std::string repoOutput = utils::exec("xbps-query -Rs linux");
+        std::string repoOutput;
+        repoOutput += utils::exec("xbps-query -Rs linux");
         repoOutput += "\n" + utils::exec("xbps-query -Rs linux-neko");
         repoOutput += "\n" + utils::exec("xbps-query -Rs linux-cachy-void");
         std::vector<std::string> repoLines = utils::split(repoOutput, '\n');
@@ -184,22 +185,24 @@ std::vector<Kernel> Kernel::getKernels() {
             std::string version = full_pkg.substr(hyphen_pos + 1);
 
             if (!isKernelPackage(pkg_name)) continue;
-            if (knownNames.count(pkg_name)) continue; // Already added as installed!
+            if (knownNames.count(pkg_name)) continue;
 
-            bool installed = (installedPkgs.count(pkg_name) > 0 || utils::packageInstalled(pkg_name));
-            if (installed && installedPkgs.count(pkg_name) > 0) {
+            bool pkgInstalled = (installedPkgs.count(pkg_name) > 0);
+            bool hasFiles = false;
+            if (pkgInstalled) {
                 version = installedPkgs[pkg_name];
+                hasFiles = kernelFilesExist(version);
             }
+            bool installed = pkgInstalled && hasFiles;
 
-            Package pkg{pkg_name, version, "void", "xbps", installed};
-            Package headers{pkg_name + "-headers", version, "void", "xbps", installed};
+            Package pkg{pkg_name, version, "void", "xbps", installed, hasFiles};
+            Package headers{pkg_name + "-headers", version, "void", "xbps", installed, true};
             kernels.emplace_back(pkg, headers);
             knownNames.insert(pkg_name);
             knownVersions.insert(version);
         }
     }
 
-    // Stage 4: Scan /boot for vmlinuz files
     std::filesystem::path bootPath("/boot");
     if (std::filesystem::exists(bootPath) && std::filesystem::is_directory(bootPath)) {
         for (const auto &entry : std::filesystem::directory_iterator(bootPath)) {
@@ -215,8 +218,9 @@ std::vector<Kernel> Kernel::getKernels() {
                 std::string ownerPkg, ownerVer;
                 if (getPkgInfoFromFile(vmlinuzPath, ownerPkg, ownerVer)) {
                     if (!knownNames.count(ownerPkg)) {
-                        Package pkg{ownerPkg, ownerVer, "void", "xbps", true};
-                        Package headers{ownerPkg + "-headers", ownerVer, "void", "xbps", true};
+                        bool hasFiles = kernelFilesExist(ownerVer);
+                        Package pkg{ownerPkg, ownerVer, "void", "xbps", true, hasFiles};
+                        Package headers{ownerPkg + "-headers", ownerVer, "void", "xbps", true, true};
                         kernels.emplace_back(pkg, headers);
                         knownNames.insert(ownerPkg);
                         knownVersions.insert(ownerVer);
@@ -227,8 +231,8 @@ std::vector<Kernel> Kernel::getKernels() {
                 std::string manualName = "linux-manual-" + version;
                 if (knownNames.count(manualName)) continue;
 
-                Package pkg{manualName, version, "local", "manual", true};
-                Package headers{"none", "none", "local", "manual", false};
+                Package pkg{manualName, version, "local", "manual", true, true};
+                Package headers{"none", "none", "local", "manual", false, false};
                 kernels.emplace_back(pkg, headers);
                 knownNames.insert(manualName);
                 knownVersions.insert(version);
@@ -236,7 +240,6 @@ std::vector<Kernel> Kernel::getKernels() {
         }
     }
 
-    // Stage 5: Scan /usr/lib/modules / /lib/modules for custom manual kernels
     std::filesystem::path modulesPath("/usr/lib/modules");
     if (!std::filesystem::exists(modulesPath)) {
         modulesPath = "/lib/modules";
@@ -252,8 +255,9 @@ std::vector<Kernel> Kernel::getKernels() {
             std::string ownerPkg, ownerVer;
             if (getPkgInfoFromFile(modDir, ownerPkg, ownerVer)) {
                 if (!knownNames.count(ownerPkg)) {
-                    Package pkg{ownerPkg, ownerVer, "void", "xbps", true};
-                    Package headers{ownerPkg + "-headers", ownerVer, "void", "xbps", true};
+                    bool hasFiles = kernelFilesExist(ownerVer);
+                    Package pkg{ownerPkg, ownerVer, "void", "xbps", true, hasFiles};
+                    Package headers{ownerPkg + "-headers", ownerVer, "void", "xbps", true, true};
                     kernels.emplace_back(pkg, headers);
                     knownNames.insert(ownerPkg);
                     knownVersions.insert(ownerVer);
@@ -264,8 +268,8 @@ std::vector<Kernel> Kernel::getKernels() {
             std::string manualName = "linux-manual-" + version;
             if (knownNames.count(manualName)) continue;
 
-            Package pkg{manualName, version, "local", "manual", true};
-            Package headers{"none", "none", "local", "manual", false};
+            Package pkg{manualName, version, "local", "manual", true, true};
+            Package headers{"none", "none", "local", "manual", false, false};
             kernels.emplace_back(pkg, headers);
             knownNames.insert(manualName);
             knownVersions.insert(version);
