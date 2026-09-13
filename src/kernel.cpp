@@ -184,8 +184,11 @@ std::vector<Kernel> Kernel::getKernels() {
         }
     }
 
-    // Fase 3: escaneo de /usr/lib/modules (o /lib/modules). xbps-query -o no reporta
-    // directorios, así que se consulta un archivo habitual dentro del directorio.
+    // Fase 3: escaneo de /usr/lib/modules (o /lib/modules) para completar el mapa de
+    // paquetes instalados que el escaneo de /boot no haya cubierto. xbps-query -o no
+    // reporta directorios, así que se consulta un archivo habitual del directorio.
+    // Un directorio de módulos sin vmlinuz en /boot es solo un resto huérfano y NO
+    // se lista como kernel instalado.
     std::filesystem::path modulesPath("/usr/lib/modules");
     if (!std::filesystem::exists(modulesPath)) {
         modulesPath = "/lib/modules";
@@ -205,9 +208,7 @@ std::vector<Kernel> Kernel::getKernels() {
             if (!ownerPkg.empty() && isKernelPackage(ownerPkg)) {
                 if (!diskVersions.count(ownerPkg)) diskVersions[ownerPkg] = version;
                 manualCandidates.erase(version);
-                continue;
             }
-            manualCandidates[version] = false;
         }
     }
 
