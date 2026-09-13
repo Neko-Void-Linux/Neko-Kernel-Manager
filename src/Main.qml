@@ -228,38 +228,6 @@ ApplicationWindow
                 }
             }
 
-            // ─── Progress Bar (visible when loading/busy) ───
-            Rectangle
-            {
-                Layout.fillWidth: true
-                height: 4
-                color: palette.currentLine
-                visible: bridge.busy || bridge.progress > 0
-                z: 99
-
-                Rectangle
-                {
-                    id: progressBarFill
-                    anchors.left: parent.left
-                    anchors.top: parent.top
-                    anchors.bottom: parent.bottom
-                    width: parent.width * (Math.max(10, bridge.progress) / 100.0)
-                    color: palette.accent
-                    
-                    Behavior on width {
-                        NumberAnimation { duration: 250; easing.type: Easing.OutQuad }
-                    }
-                }
-
-                // Smooth pulse animation while busy
-                SequentialAnimation on opacity {
-                    running: bridge.busy
-                    loops: Animation.Infinite
-                    NumberAnimation { from: 1.0; to: 0.5; duration: 500; easing.type: Easing.InOutSine }
-                    NumberAnimation { from: 0.5; to: 1.0; duration: 500; easing.type: Easing.InOutSine }
-                }
-            }
-
             // ─── Main content surface ───
             Item
             {
@@ -342,6 +310,34 @@ ApplicationWindow
                                 border.color: palette.currentLine
                             }
                             onClicked: logModal.open()
+                        }
+
+                        // About button
+                        Button
+                        {
+                            id: aboutBtn; text: "?"
+                            hoverEnabled: true
+                            ToolTip
+                            {
+                                id: aboutTip
+                                visible: aboutBtn.hovered
+                                delay: 400
+                                text: qsTr("About Neko Kernel Manager")
+                                contentItem: Text { text: aboutTip.text; font.pixelSize: 11; color: palette.fg }
+                                background: Rectangle { color: palette.popoverBg; border.color: palette.currentLine; border.width: 1; radius: 4 }
+                            }
+                            contentItem: Text
+                            {
+                                text: aboutBtn.text; font.bold: true; font.pixelSize: 13; color: palette.fg
+                                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                            }
+                            background: Rectangle
+                            {
+                                implicitHeight: 28; implicitWidth: 28; radius: 0
+                                color: aboutBtn.hovered ? palette.surfaceHi : palette.surface
+                                border.color: palette.currentLine
+                            }
+                            onClicked: aboutModal.open()
                         }
                     }
 
@@ -475,23 +471,21 @@ ApplicationWindow
                         {
                             Layout.fillWidth: true; Layout.fillHeight: true
 
-                            ScrollView
+                            GridView
                             {
-                                id: kernelScroll
+                                id: kernelGrid
                                 anchors.fill: parent
                                 clip: true
-                                ScrollBar.vertical.policy: ScrollBar.AsNeeded
-                                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                                cellWidth: width / Math.max(1, Math.floor(width / 200))
+                                cellHeight: 132
+                                model: kernelSearch.text.trim().length === 0 ? bridge.kernels
+                                       : bridge.kernels.filter(function(k) { return (k.name || "").toLowerCase().indexOf(kernelSearch.text.trim().toLowerCase()) !== -1 })
+                                boundsBehavior: Flickable.StopAtBounds
 
-                                GridView
+                                ScrollBar.vertical: ScrollBar
                                 {
-                                    id: kernelGrid
-                                    width: kernelScroll.availableWidth; height: contentHeight
-                                    cellWidth: width / Math.max(1, Math.floor(width / 200))
-                                    cellHeight: 132
-                                    model: kernelSearch.text.trim().length === 0 ? bridge.kernels
-                                           : bridge.kernels.filter(function(k) { return (k.name || "").toLowerCase().indexOf(kernelSearch.text.trim().toLowerCase()) !== -1 })
-                                    interactive: false
+                                    policy: ScrollBar.AlwaysOn
+                                }
 
                                     delegate: Rectangle
                                     {
@@ -664,7 +658,6 @@ ApplicationWindow
                                         }
                                     }
                                 }
-                            }
 
                             // Shown when the grid has no items
                             ColumnLayout
@@ -981,6 +974,125 @@ ApplicationWindow
                             }
                         }
                     }
+                }
+            }
+
+            // ─── Progress Bar (visible when loading/busy) ───
+            Rectangle
+            {
+                Layout.fillWidth: true
+                height: 4
+                color: palette.currentLine
+                visible: bridge.busy || bridge.progress > 0
+                z: 99
+
+                Rectangle
+                {
+                    id: progressBarFill
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: parent.width * (Math.max(10, bridge.progress) / 100.0)
+                    color: palette.accent
+
+                    Behavior on width {
+                        NumberAnimation { duration: 250; easing.type: Easing.OutQuad }
+                    }
+                }
+
+                // Smooth pulse animation while busy
+                SequentialAnimation on opacity {
+                    running: bridge.busy
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 1.0; to: 0.5; duration: 500; easing.type: Easing.InOutSine }
+                    NumberAnimation { from: 0.5; to: 1.0; duration: 500; easing.type: Easing.InOutSine }
+                }
+            }
+        }
+    }
+
+    // ─── About Modal ───
+    Popup
+    {
+        id: aboutModal
+        x: (window.width - width) / 2; y: (window.height - height) / 2
+        width: Math.min(420, window.width - 40); height: Math.min(340, window.height - 40)
+        modal: true; focus: true
+        background: Rectangle
+        {
+            color: palette.surface; radius: 0; border.color: palette.currentLine; border.width: 1
+        }
+
+        ColumnLayout
+        {
+            anchors.fill: parent; anchors.margins: 20; spacing: 16
+
+            // Logo + Title
+            ColumnLayout
+            {
+                Layout.fillWidth: true; spacing: 8; Layout.alignment: Qt.AlignHCenter
+
+                Image
+                {
+                    source: "qrc:/neko/Data/logo.png"
+                    Layout.preferredWidth: 56; Layout.preferredHeight: 56
+                    sourceSize: Qt.size(112, 112); smooth: true
+                    Layout.alignment: Qt.AlignHCenter
+                }
+                Text
+                {
+                    text: "Neko Kernel Manager"
+                    color: palette.fg; font.pixelSize: 18; font.weight: Font.Bold; font.letterSpacing: -0.3
+                    Layout.alignment: Qt.AlignHCenter
+                }
+
+            }
+
+            // Description
+            Text
+            {
+                text: qsTr("A graphical kernel manager for Void Linux.\nInstall, remove, and manage Linux kernels and DKMS modules with ease.")
+                color: palette.textSoft; font.pixelSize: 12
+                horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+
+            // Separator
+            Rectangle { Layout.fillWidth: true; height: 1; color: palette.currentLine }
+
+            // Info rows
+            ColumnLayout
+            {
+                Layout.fillWidth: true; spacing: 4
+                Text
+                {
+                    text: qsTr("License: GPL-3.0-or-later")
+                    color: palette.comment; font.pixelSize: 11
+                    Layout.alignment: Qt.AlignHCenter
+                }
+                Text
+                {
+                    text: qsTr("Built with Qt/QML & C++")
+                    color: palette.comment; font.pixelSize: 11
+                    Layout.alignment: Qt.AlignHCenter
+                }
+            }
+
+            Item { Layout.fillHeight: true }
+
+            // Close button
+            Button
+            {
+                Layout.alignment: Qt.AlignHCenter
+                text: qsTr("Close"); onClicked: aboutModal.close()
+                background: Rectangle
+                {
+                    implicitWidth: 90; implicitHeight: 28; radius: 0; color: palette.accent
+                }
+                contentItem: Text
+                {
+                    text: parent.text; color: palette.accentFg; font.bold: true; font.pixelSize: 11
+                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                 }
             }
         }

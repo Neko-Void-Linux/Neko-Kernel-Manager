@@ -5,6 +5,7 @@
 #include <sstream>
 #include <set>
 #include <map>
+#include <algorithm>
 
 Kernel::Kernel(Package pkg, Package headers) : m_pkg(pkg), m_headers(headers) {}
 
@@ -275,6 +276,23 @@ std::vector<Kernel> Kernel::getKernels() {
             knownVersions.insert(version);
         }
     }
+
+    static const std::vector<std::string> priorityOrder = {
+        "linux-neko-rt", "linux-neko-zen", "linux-cachy-void", "linux-mainline", "linux-lts"
+    };
+    auto priority = [](const std::string &name) -> int {
+        for (size_t i = 0; i < priorityOrder.size(); ++i) {
+            if (name == priorityOrder[i] || name.rfind(priorityOrder[i], 0) == 0) {
+                return static_cast<int>(i);
+            }
+        }
+        return static_cast<int>(priorityOrder.size());
+    };
+
+    std::stable_sort(kernels.begin(), kernels.end(),
+        [&priority](const Kernel &a, const Kernel &b) {
+            return priority(a.name()) < priority(b.name());
+        });
 
     return kernels;
 }
